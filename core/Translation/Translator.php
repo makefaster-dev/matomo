@@ -182,11 +182,14 @@ class Translator
 
     /**
      * Generate javascript translations array
+     *
+     * @param string[]|null $plugins Only include translation keys registered by these plugins.
+     *                               By default the keys of every loaded plugin are included.
      */
-    public function getJavascriptTranslations()
+    public function getJavascriptTranslations(?array $plugins = null)
     {
         $clientSideTranslations = array();
-        foreach ($this->getClientSideTranslationKeys() as $id) {
+        foreach ($this->getClientSideTranslationKeys($plugins) as $id) {
             if (strpos($id, '_') === false) {
                 StaticContainer::get(LoggerInterface::class)->warning(
                     'Unexpected translation key found in client side translations: {translation_key}',
@@ -231,7 +234,10 @@ class Translator
      * Returns the list of client side translations by key. These translations will be outputted
      * to the translation JavaScript.
      */
-    private function getClientSideTranslationKeys()
+    /**
+     * @param string[]|null $plugins Only collect translation keys registered by these plugins.
+     */
+    private function getClientSideTranslationKeys(?array $plugins = null)
     {
         $result = array();
 
@@ -253,7 +259,7 @@ class Translator
          *
          * @param array &$result The whole list of client side translation keys.
          */
-        Piwik::postEvent('Translate.getClientSideTranslationKeys', array(&$result));
+        Piwik::postEvent('Translate.getClientSideTranslationKeys', array(&$result), false, $plugins);
 
         $result = array_unique($result);
 

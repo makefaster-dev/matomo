@@ -147,7 +147,11 @@ class AssetManager extends Singleton
      */
     public function getJsInclusionDirective(bool $deferJS = false, bool $minimal = false): string
     {
-        $result = "<script type=\"text/javascript\">\n" . StaticContainer::get('Piwik\Translation\Translator')->getJavascriptTranslations() . "\n</script>";
+        $translationsScope = $minimal ? $this->getLoginTranslationPlugins() : null;
+
+        $result = "<script type=\"text/javascript\">\n"
+            . StaticContainer::get('Piwik\Translation\Translator')->getJavascriptTranslations($translationsScope)
+            . "\n</script>";
 
         if ($this->isMergedAssetsDisabled()) {
             $this->getMergedCoreJSAsset()->delete();
@@ -430,6 +434,46 @@ class AssetManager extends Singleton
     private function getCoreJScriptFetcher()
     {
         return new JScriptUIAssetFetcher($this->getLoadedPlugins(true), $this->theme);
+    }
+
+    /**
+     * Return the names of the plugins whose client-side translations login-layout pages need.
+     *
+     * Those pages inline only the translation entries of the plugins rendering the login
+     * surfaces instead of every plugin's client-side catalog, so the uncacheable document
+     * stays small.
+     *
+     * @return string[]
+     */
+    protected function getLoginTranslationPlugins(): array
+    {
+        $plugins = [
+            'CoreHome',
+            'CorePluginsAdmin',
+            'Login',
+            'TwoFactorAuth',
+        ];
+
+        /**
+         * Triggered when gathering the list of plugins whose client-side translations are
+         * inlined on pages using the login layout (login form, password reset, invitation
+         * and two-factor pages).
+         *
+         * Use this event to add your plugin if it renders translated client-side text on the
+         * login screen.
+         *
+         * **Example**
+         *
+         *     public function getLoginTranslationPlugins(&$plugins)
+         *     {
+         *         $plugins[] = 'MyLoginPlugin';
+         *     }
+         *
+         * @param string[] $plugins Names of the plugins whose client-side translations login-layout pages need.
+         */
+        Piwik::postEvent('AssetManager.getLoginTranslationPlugins', [&$plugins]);
+
+        return $plugins;
     }
 
     protected function getLoginJScriptFetcher()
