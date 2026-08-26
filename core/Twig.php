@@ -246,11 +246,12 @@ class Twig
 
             $assetType = strtolower($params['type']);
             $deferJs   = boolval($params['defer'] ?? false);
+            $minimalJs = boolval($params['minimal'] ?? false);
             switch ($assetType) {
                 case 'css':
                     return AssetManager::getInstance()->getCssInclusionDirective();
                 case 'js':
-                    return AssetManager::getInstance()->getJsInclusionDirective($deferJs);
+                    return AssetManager::getInstance()->getJsInclusionDirective($deferJs, $minimalJs);
                 default:
                     throw new Exception("The twig function includeAssets 'type' parameter needs to be either 'css' or 'js'.");
             }

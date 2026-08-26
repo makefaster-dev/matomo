@@ -1,4 +1,4 @@
 {% autoescape false %}
     {{ includeAssets({"type": "css"}) }}
-    {{ includeAssets({"type": "js", "defer": deferjs|default(false) }) }}
+    {{ includeAssets({"type": "js", "defer": deferjs|default(false), "minimal": minimaljs|default(false) }) }}
 {% endautoescape %}

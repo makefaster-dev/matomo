@@ -43,6 +43,7 @@ class AssetManager extends Singleton
     public const MERGED_CSS_FILE = "asset_manager_global_css.css";
     public const MERGED_CORE_JS_FILE = "asset_manager_core_js.js";
     public const MERGED_NON_CORE_JS_FILE = "asset_manager_non_core_js.js";
+    public const MERGED_LOGIN_JS_FILE = "asset_manager_login_%d_js.js";
 
     public const CSS_IMPORT_DIRECTIVE = "<link rel=\"stylesheet\" type=\"text/css\" href=\"%s\" />\n";
     public const JS_IMPORT_DIRECTIVE = "<script type=\"text/javascript\" src=\"%s\"></script>\n";
@@ -50,6 +51,7 @@ class AssetManager extends Singleton
     public const GET_CSS_MODULE_ACTION = "index.php?module=Proxy&action=getCss";
     public const GET_CORE_JS_MODULE_ACTION = "index.php?module=Proxy&action=getCoreJs";
     public const GET_NON_CORE_JS_MODULE_ACTION = "index.php?module=Proxy&action=getNonCoreJs";
+    public const GET_LOGIN_JS_MODULE_ACTION = "index.php?module=Proxy&action=getLoginJs";
     public const GET_JS_UMD_MODULE_ACTION = "index.php?module=Proxy&action=getUmdJs&chunk=";
 
     /**
@@ -138,18 +140,35 @@ class AssetManager extends Singleton
 
     /**
      * Return JS file inclusion directive(s) using the markup <script>
+     *
+     * @param bool $deferJS Whether to add the `defer` attribute to the script tags.
+     * @param bool $minimal Whether to reference the reduced JavaScript bundle meant for
+     *                      login-layout pages instead of the whole core bundle.
      */
-    public function getJsInclusionDirective(bool $deferJS = false): string
+    public function getJsInclusionDirective(bool $deferJS = false, bool $minimal = false): string
     {
-        $result = "<script type=\"text/javascript\">\n" . StaticContainer::get('Piwik\Translation\Translator')->getJavascriptTranslations() . "\n</script>";
+        $translationsScope = $minimal ? $this->getLoginTranslationPlugins() : null;
+
+        $result = "<script type=\"text/javascript\">\n"
+            . StaticContainer::get('Piwik\Translation\Translator')->getJavascriptTranslations($translationsScope)
+            . "\n</script>";
 
         if ($this->isMergedAssetsDisabled()) {
             $this->getMergedCoreJSAsset()->delete();
             $this->getMergedNonCoreJSAsset()->delete();
+            $this->getMergedLoginJSAsset(1)->delete();
+            $this->getMergedLoginJSAsset(2)->delete();
 
             $result .= $this->getIndividualCoreAndNonCoreJsIncludes();
         } else {
-            $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_CORE_JS_MODULE_ACTION);
+            if ($minimal) {
+                // Two sequential parts, so the first part can evaluate while the second one
+                // is still downloading.
+                $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_LOGIN_JS_MODULE_ACTION . '&part=1');
+                $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_LOGIN_JS_MODULE_ACTION . '&part=2');
+            } else {
+                $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_CORE_JS_MODULE_ACTION);
+            }
             $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_NON_CORE_JS_MODULE_ACTION);
 
             $result .= $this->getPluginUmdChunks();
@@ -230,6 +249,23 @@ class AssetManager extends Singleton
     }
 
     /**
+     * Return the login js merged file absolute location.
+     * If there is none, the generation process will be triggered.
+     *
+     * This is the reduced set of JavaScript files login-layout pages (login form, password
+     * reset, invitation, two-factor challenge) need, so those pages do not have to download
+     * the whole core bundle with the reporting UI in it.
+     *
+     * @return UIAsset
+     */
+    public function getMergedLoginJavaScript(int $part = 1)
+    {
+        $part = $part === 2 ? 2 : 1;
+
+        return $this->getMergedJavascript($this->getLoginJScriptFetcher($part), $this->getMergedLoginJSAsset($part));
+    }
+
+    /**
      * Return a chunk JS merged file absolute location.
      * If there is none, the generation process will be triggered.
      *
@@ -279,6 +315,9 @@ class AssetManager extends Singleton
                     $assetsToRemove[] = $this->getMergedNonCoreJSAsset();
                 }
 
+                $assetsToRemove[] = $this->getMergedLoginJSAsset(1);
+                $assetsToRemove[] = $this->getMergedLoginJSAsset(2);
+
                 $assetFetcher = $this->getPluginUmdJScriptFetcher();
                 foreach ($assetFetcher->getChunkFiles() as $chunk) {
                     $files = $chunk->getFiles();
@@ -303,6 +342,8 @@ class AssetManager extends Singleton
         } else {
             $assetsToRemove[] = $this->getMergedCoreJSAsset();
             $assetsToRemove[] = $this->getMergedNonCoreJSAsset();
+            $assetsToRemove[] = $this->getMergedLoginJSAsset(1);
+            $assetsToRemove[] = $this->getMergedLoginJSAsset(2);
 
             $assetFetcher = $this->getPluginUmdJScriptFetcher();
             foreach ($assetFetcher->getChunkFiles() as $chunk) {
@@ -403,6 +444,97 @@ class AssetManager extends Singleton
         return new JScriptUIAssetFetcher($this->getLoadedPlugins(true), $this->theme);
     }
 
+    /**
+     * Return the names of the plugins whose client-side translations login-layout pages need.
+     *
+     * Those pages inline only the translation entries of the plugins rendering the login
+     * surfaces instead of every plugin's client-side catalog, so the uncacheable document
+     * stays small.
+     *
+     * @return string[]
+     */
+    protected function getLoginTranslationPlugins(): array
+    {
+        $plugins = [
+            'CoreHome',
+            'CorePluginsAdmin',
+            'Login',
+            'TwoFactorAuth',
+        ];
+
+        /**
+         * Triggered when gathering the list of plugins whose client-side translations are
+         * inlined on pages using the login layout (login form, password reset, invitation
+         * and two-factor pages).
+         *
+         * Use this event to add your plugin if it renders translated client-side text on the
+         * login screen.
+         *
+         * **Example**
+         *
+         *     public function getLoginTranslationPlugins(&$plugins)
+         *     {
+         *         $plugins[] = 'MyLoginPlugin';
+         *     }
+         *
+         * @param string[] $plugins Names of the plugins whose client-side translations login-layout pages need.
+         */
+        Piwik::postEvent('AssetManager.getLoginTranslationPlugins', [&$plugins]);
+
+        return $plugins;
+    }
+
+    protected function getLoginJScriptFetcher(int $part = 1)
+    {
+        if ($part === 1) {
+            // The first part can be downloaded and evaluated while the second part is still
+            // downloading, so the two bundles roughly halve the bytes each request carries.
+            $jsFiles = [
+                "node_modules/jquery/dist/jquery.min.js",
+                "node_modules/@materializecss/materialize/dist/js/materialize.min.js",
+                "plugins/CoreHome/javascripts/materialize-bc.js",
+                Development::isEnabled() ? "node_modules/vue/dist/vue.global.js" : "node_modules/vue/dist/vue.global.prod.js",
+            ];
+
+            return new StaticUIAssetFetcher($jsFiles, $jsFiles, $this->theme);
+        }
+
+        $jsFiles = [
+            Development::isEnabled() ? "plugins/CoreVue/polyfills/dist/MatomoPolyfills.js" : "plugins/CoreVue/polyfills/dist/MatomoPolyfills.min.js",
+            "node_modules/sprintf-js/dist/sprintf.min.js",
+            "node_modules/mousetrap/mousetrap.min.js",
+            "node_modules/qrcodejs2/qrcode.min.js",
+            "plugins/CoreHome/javascripts/require.js",
+            "plugins/Morpheus/javascripts/piwikHelper.js",
+            "plugins/Morpheus/javascripts/layout.js",
+            "plugins/CoreHome/javascripts/broadcast.js",
+            "plugins/Login/javascripts/login.js",
+        ];
+
+        /**
+         * Triggered when gathering the list of JavaScript files needed by pages using the
+         * login layout (login form, password reset, invitation and two-factor pages).
+         *
+         * These pages reference a reduced JavaScript bundle instead of the whole core bundle,
+         * so the login screen loads fast. Use this event to add JavaScript files here if your
+         * plugin extends the login screen and the files it registered through
+         * {@hook AssetManager.getJavaScriptFiles} are bundled with core (files of non-core
+         * plugins are always loaded on login pages).
+         *
+         * **Example**
+         *
+         *     public function getLoginJsFiles(&$jsFiles)
+         *     {
+         *         $jsFiles[] = "plugins/MyPlugin/javascripts/myLoginExtension.js";
+         *     }
+         *
+         * @param string[] $jsFiles The JavaScript files to load on login-layout pages.
+         */
+        Piwik::postEvent('AssetManager.getLoginJavaScriptFiles', [&$jsFiles]);
+
+        return new StaticUIAssetFetcher($jsFiles, $jsFiles, $this->theme);
+    }
+
     protected function getNonCoreJScriptFetcher()
     {
         return new JScriptUIAssetFetcher($this->getLoadedPlugins(false), $this->theme);
@@ -480,6 +612,14 @@ class AssetManager extends Singleton
     protected function getMergedNonCoreJSAsset()
     {
         return $this->getMergedUIAsset(self::MERGED_NON_CORE_JS_FILE);
+    }
+
+    /**
+     * @return UIAsset
+     */
+    protected function getMergedLoginJSAsset(int $part = 1)
+    {
+        return $this->getMergedUIAsset(sprintf(self::MERGED_LOGIN_JS_FILE, $part));
     }
 
     /**

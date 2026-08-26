@@ -69,6 +69,20 @@ class Controller extends \Piwik\Plugin\Controller
     }
 
     /**
+     * Output the merged JavaScript file for login-layout pages.
+     * This method is called when the asset manager is enabled.
+     *
+     * @return void
+     * @see core/AssetManager.php
+     */
+    public function getLoginJs()
+    {
+        $part = Request::fromRequest()->getIntegerParameter('part', 1);
+        $jsMergedFile = AssetManager::getInstance()->getMergedLoginJavaScript($part);
+        $this->serveJsFile($jsMergedFile);
+    }
+
+    /**
      * Output a UMD merged chunk JavaScript file.
      * This method is called when the asset manager is enabled.
      *

@@ -6,6 +6,8 @@
 
 {% block head %}
     {% set deferjs = true %}
+    {# Login-layout pages only need the reduced login JavaScript bundle, not the reporting UI. #}
+    {% set minimaljs = true %}
     {{ parent() }}
 {% endblock %}
 
