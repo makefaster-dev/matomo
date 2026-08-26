@@ -43,7 +43,7 @@ class AssetManager extends Singleton
     public const MERGED_CSS_FILE = "asset_manager_global_css.css";
     public const MERGED_CORE_JS_FILE = "asset_manager_core_js.js";
     public const MERGED_NON_CORE_JS_FILE = "asset_manager_non_core_js.js";
-    public const MERGED_LOGIN_JS_FILE = "asset_manager_login_js.js";
+    public const MERGED_LOGIN_JS_FILE = "asset_manager_login_%d_js.js";
 
     public const CSS_IMPORT_DIRECTIVE = "<link rel=\"stylesheet\" type=\"text/css\" href=\"%s\" />\n";
     public const JS_IMPORT_DIRECTIVE = "<script type=\"text/javascript\" src=\"%s\"></script>\n";
@@ -156,12 +156,16 @@ class AssetManager extends Singleton
         if ($this->isMergedAssetsDisabled()) {
             $this->getMergedCoreJSAsset()->delete();
             $this->getMergedNonCoreJSAsset()->delete();
-            $this->getMergedLoginJSAsset()->delete();
+            $this->getMergedLoginJSAsset(1)->delete();
+            $this->getMergedLoginJSAsset(2)->delete();
 
             $result .= $this->getIndividualCoreAndNonCoreJsIncludes();
         } else {
             if ($minimal) {
-                $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_LOGIN_JS_MODULE_ACTION);
+                // Two sequential parts, so the first part can evaluate while the second one
+                // is still downloading.
+                $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_LOGIN_JS_MODULE_ACTION . '&part=1');
+                $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_LOGIN_JS_MODULE_ACTION . '&part=2');
             } else {
                 $result .= sprintf($deferJS ? self::JS_DEFER_IMPORT_DIRECTIVE : self::JS_IMPORT_DIRECTIVE, self::GET_CORE_JS_MODULE_ACTION);
             }
@@ -254,9 +258,11 @@ class AssetManager extends Singleton
      *
      * @return UIAsset
      */
-    public function getMergedLoginJavaScript()
+    public function getMergedLoginJavaScript(int $part = 1)
     {
-        return $this->getMergedJavascript($this->getLoginJScriptFetcher(), $this->getMergedLoginJSAsset());
+        $part = $part === 2 ? 2 : 1;
+
+        return $this->getMergedJavascript($this->getLoginJScriptFetcher($part), $this->getMergedLoginJSAsset($part));
     }
 
     /**
@@ -309,7 +315,8 @@ class AssetManager extends Singleton
                     $assetsToRemove[] = $this->getMergedNonCoreJSAsset();
                 }
 
-                $assetsToRemove[] = $this->getMergedLoginJSAsset();
+                $assetsToRemove[] = $this->getMergedLoginJSAsset(1);
+                $assetsToRemove[] = $this->getMergedLoginJSAsset(2);
 
                 $assetFetcher = $this->getPluginUmdJScriptFetcher();
                 foreach ($assetFetcher->getChunkFiles() as $chunk) {
@@ -335,7 +342,8 @@ class AssetManager extends Singleton
         } else {
             $assetsToRemove[] = $this->getMergedCoreJSAsset();
             $assetsToRemove[] = $this->getMergedNonCoreJSAsset();
-            $assetsToRemove[] = $this->getMergedLoginJSAsset();
+            $assetsToRemove[] = $this->getMergedLoginJSAsset(1);
+            $assetsToRemove[] = $this->getMergedLoginJSAsset(2);
 
             $assetFetcher = $this->getPluginUmdJScriptFetcher();
             foreach ($assetFetcher->getChunkFiles() as $chunk) {
@@ -476,13 +484,22 @@ class AssetManager extends Singleton
         return $plugins;
     }
 
-    protected function getLoginJScriptFetcher()
+    protected function getLoginJScriptFetcher(int $part = 1)
     {
+        if ($part === 1) {
+            // The first part can be downloaded and evaluated while the second part is still
+            // downloading, so the two bundles roughly halve the bytes each request carries.
+            $jsFiles = [
+                "node_modules/jquery/dist/jquery.min.js",
+                "node_modules/@materializecss/materialize/dist/js/materialize.min.js",
+                "plugins/CoreHome/javascripts/materialize-bc.js",
+                Development::isEnabled() ? "node_modules/vue/dist/vue.global.js" : "node_modules/vue/dist/vue.global.prod.js",
+            ];
+
+            return new StaticUIAssetFetcher($jsFiles, $jsFiles, $this->theme);
+        }
+
         $jsFiles = [
-            "node_modules/jquery/dist/jquery.min.js",
-            "node_modules/@materializecss/materialize/dist/js/materialize.min.js",
-            "plugins/CoreHome/javascripts/materialize-bc.js",
-            Development::isEnabled() ? "node_modules/vue/dist/vue.global.js" : "node_modules/vue/dist/vue.global.prod.js",
             Development::isEnabled() ? "plugins/CoreVue/polyfills/dist/MatomoPolyfills.js" : "plugins/CoreVue/polyfills/dist/MatomoPolyfills.min.js",
             "node_modules/sprintf-js/dist/sprintf.min.js",
             "node_modules/mousetrap/mousetrap.min.js",
@@ -600,9 +617,9 @@ class AssetManager extends Singleton
     /**
      * @return UIAsset
      */
-    protected function getMergedLoginJSAsset()
+    protected function getMergedLoginJSAsset(int $part = 1)
     {
-        return $this->getMergedUIAsset(self::MERGED_LOGIN_JS_FILE);
+        return $this->getMergedUIAsset(sprintf(self::MERGED_LOGIN_JS_FILE, $part));
     }
 
     /**

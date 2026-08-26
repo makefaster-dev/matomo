@@ -77,7 +77,8 @@ class Controller extends \Piwik\Plugin\Controller
      */
     public function getLoginJs()
     {
-        $jsMergedFile = AssetManager::getInstance()->getMergedLoginJavaScript();
+        $part = Request::fromRequest()->getIntegerParameter('part', 1);
+        $jsMergedFile = AssetManager::getInstance()->getMergedLoginJavaScript($part);
         $this->serveJsFile($jsMergedFile);
     }
 
